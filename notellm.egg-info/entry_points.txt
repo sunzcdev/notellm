@@ -1,2 +1,0 @@
-[console_scripts]
-notellm = notellm.runner:main
