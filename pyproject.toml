@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notellm"
+version = "0.6.0"
+description = "Open Notebook MCP Server — operator-based architecture"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "shun" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+notellm = "notellm.runner:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["notellm*"]
