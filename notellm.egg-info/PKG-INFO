@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: notellm
+Version: 0.6.0
+Summary: Open Notebook MCP Server — operator-based architecture
+Author: shun
+License-Expression: MIT
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10

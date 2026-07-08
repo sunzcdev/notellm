@@ -39,7 +39,7 @@ async def serve(registry: OperatorRegistry, ctx: Context,
                 hooks: list[EventHook]) -> None:
     import asyncio
 
-    log("INFO", "notellm-mcp starting", version=__version__)
+    log("INFO", "notellm-mcp entering serve loop", version=__version__)
 
     async def _fire(method: str, *args: object) -> None:
         for hook in hooks:
@@ -47,9 +47,11 @@ async def serve(registry: OperatorRegistry, ctx: Context,
             if fn:
                 await fn(*args)
 
+    loop = asyncio.get_running_loop()
+
     while True:
         try:
-            req = await asyncio.get_event_loop().run_in_executor(None, _read)
+            req = await loop.run_in_executor(None, _read)
         except EOFError:
             log("INFO", "EOF on stdin, shutting down")
             break
