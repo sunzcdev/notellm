@@ -51,6 +51,7 @@ TOOL_SCHEMA = {
             "channel": {"type": "string", "description": "Source filter: 'douyin', 'bilibili', 'youtube', 'reddit', 'twitter', 'xiaohongshu', 'exa_search', or 'all' (default all)"},
             "sec_uid": {"type": "string", "description": "Douyin sec_uid for deep collect (download + transcribe)"},
             "share_link": {"type": "string", "description": "Douyin share link (auto-extracts user sec_uid)"},
+            "video_link": {"type": "string", "description": "Single-content direct link for any platform: Bilibili (BV号/b23.tv/bilibili.com), YouTube (youtube.com/youtu.be), Douyin (v.douyin.com/iesdouyin.com), Xiaohongshu (xiaohongshu.com/explore/xxx)"},
         },
         "required": [],
     },
@@ -62,9 +63,11 @@ async def run(args: dict, ctx: Context) -> dict:
     notebook_id = args.get("notebook_id", "")
     sec_uid = args.get("sec_uid", "")
     share_link = args.get("share_link", "")
+    video_link = args.get("video_link", "")
     channel = args.get("channel", "")
 
-    slug = re.sub(r'[^a-zA-Z0-9一-鿿_-]', '_', topic or "untitled")[:40]
+    slug_base = topic or video_link or "untitled"
+    slug = re.sub(r'[^a-zA-Z0-9一-鿿_-]', '_', slug_base)[:40]
     msgs: list[str] = []
     warns: list[str] = []
     imported = 0
@@ -112,12 +115,83 @@ async def run(args: dict, ctx: Context) -> dict:
         else:
             warns.append("Share link extraction returned no data")
 
-    # ── 2. Douyin deep pipeline (download + transcribe) ──
+    # ── 2. video_link: single-content direct link for any supported platform ──
+    _video_platforms = ("bilibili", "youtube", "douyin", "xiaohongshu")
+    if video_link and (not channel or channel in _video_platforms + ("all",)):
+        vlink = video_link.strip()
+        # Detect bilibili: BV号, bilibili.com, b23.tv
+        if vlink.startswith("BV") or "bilibili.com" in vlink or "b23.tv" in vlink:
+            if channel in ("bilibili", "all", ""):
+                raw = _run_ar_tool("bilibili", ["video", vlink], timeout=30)
+                if raw and "❌" not in raw:
+                    content = _ensure_frontmatter(raw, vlink, "bilibili-video")
+                    fp = _save_temp_file(slug, "bilibili-video", 1, content, ctx)
+                    from . import add_source
+                    r2 = await add_source.run({"notebook_id": nb_id, "file_path": fp}, ctx)
+                    if "error" not in r2:
+                        imported += 1
+                        msgs.append(f"Bilibili video: {r2.get('title', '?')}")
+                    else:
+                        warns.append(f"Bilibili import failed: {r2.get('error')}")
+                else:
+                    warns.append(f"Bilibili video not found: {vlink}")
+        # Detect YouTube: youtube.com, youtu.be
+        elif "youtube.com" in vlink or "youtu.be" in vlink:
+            if channel in ("youtube", "all", ""):
+                raw = _run_ar_tool("youtube", ["video", vlink], timeout=45)
+                if raw and "❌" not in raw:
+                    content = _ensure_frontmatter(raw, vlink, "youtube-video")
+                    fp = _save_temp_file(slug, "youtube-video", 1, content, ctx)
+                    from . import add_source
+                    r2 = await add_source.run({"notebook_id": nb_id, "file_path": fp}, ctx)
+                    if "error" not in r2:
+                        imported += 1
+                        msgs.append(f"YouTube video: {r2.get('title', '?')}")
+                    else:
+                        warns.append(f"YouTube import failed: {r2.get('error')}")
+                else:
+                    warns.append(f"YouTube video not found: {vlink}")
+        # Detect Douyin: douyin.com, v.douyin.com, iesdouyin.com
+        elif "douyin.com" in vlink or "iesdouyin.com" in vlink:
+            if channel in ("douyin", "all", ""):
+                raw = _run_ar_tool("douyin", ["video", vlink], timeout=30)
+                if raw and "❌" not in raw:
+                    content = _ensure_frontmatter(raw, vlink, "douyin-video")
+                    fp = _save_temp_file(slug, "douyin-video", 1, content, ctx)
+                    from . import add_source
+                    r2 = await add_source.run({"notebook_id": nb_id, "file_path": fp}, ctx)
+                    if "error" not in r2:
+                        imported += 1
+                        msgs.append(f"Douyin video: {r2.get('title', '?')}")
+                    else:
+                        warns.append(f"Douyin import failed: {r2.get('error')}")
+                else:
+                    warns.append(f"Douyin video not found: {vlink}")
+        # Detect Xiaohongshu: xiaohongshu.com, xhslink.com
+        elif "xiaohongshu.com" in vlink or "xhslink.com" in vlink or "s.xiaohongshu.com" in vlink:
+            if channel in ("xiaohongshu", "all", ""):
+                raw = _run_ar_tool("xiaohongshu", ["note", vlink], timeout=30)
+                if raw and "❌" not in raw:
+                    content = _ensure_frontmatter(raw, vlink, "xiaohongshu-note")
+                    fp = _save_temp_file(slug, "xiaohongshu-note", 1, content, ctx)
+                    from . import add_source
+                    r2 = await add_source.run({"notebook_id": nb_id, "file_path": fp}, ctx)
+                    if "error" not in r2:
+                        imported += 1
+                        msgs.append(f"Xiaohongshu note: {r2.get('title', '?')}")
+                    else:
+                        warns.append(f"Xiaohongshu import failed: {r2.get('error')}")
+                else:
+                    warns.append(f"Xiaohongshu note not found: {vlink}")
+        else:
+            warns.append(f"Unrecognized video_link format: {vlink}")
+
+    # ── 3. Douyin deep pipeline (download + transcribe) ──
     if sec_uid and (not channel or channel in ("douyin", "all")):
         result = await _deep_collect(sec_uid, slug, topic, nb_id, ctx)
         return result
 
-    # ── 3. Shallow collect: multi-channel search (PARALLEL) ──
+    # ── 4. Shallow collect: multi-channel search (PARALLEL) ──
     channels_list = ["douyin", "bilibili", "youtube", "reddit", "twitter", "xiaohongshu", "exa_search"]
     if channel and channel != "all":
         channels_list = [channel]
