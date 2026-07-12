@@ -140,7 +140,37 @@ async def run(args: dict, ctx: Context) -> dict:
             if channel in ("youtube", "all", ""):
                 raw = _run_ar_tool("youtube", ["video", vlink], timeout=45)
                 if raw and "❌" not in raw:
+                    # Step 1: get metadata
                     content = _ensure_frontmatter(raw, vlink, "youtube-video")
+                    # Step 2: try subtitle first (fast path), fallback to ASR
+                    transcript_text = ""
+                    for sub_lang in ("zh", "zh-Hans", "zh-Hant", "en"):
+                        sub_raw = _run_ar_tool("youtube", ["subtitle", vlink, "--lang", sub_lang], timeout=60)
+                        if sub_raw and "❌" not in sub_raw and "未找到字幕" not in sub_raw:
+                            # Strip subtitle frontmatter, keep body
+                            sub_body = sub_raw
+                            if sub_body.startswith("---"):
+                                parts = sub_body.split("---", 2)
+                                if len(parts) >= 3:
+                                    sub_body = parts[2].strip()
+                            transcript_text = sub_body
+                            break
+                    if not transcript_text:
+                        # Step 3: no subtitle → ASR via transcribe
+                        log("INFO", f"No subtitles for {vlink}, falling back to ASR transcription")
+                        asr_raw = _run_ar_tool("youtube", ["transcribe", vlink], timeout=300)
+                        if asr_raw and "❌" not in asr_raw and "转录失败" not in asr_raw:
+                            asr_body = asr_raw
+                            if asr_body.startswith("---"):
+                                parts = asr_body.split("---", 2)
+                                if len(parts) >= 3:
+                                    asr_body = parts[2].strip()
+                            if asr_body:
+                                transcript_text = asr_body
+                    if transcript_text:
+                        content += f"\n\n## 视频全文\n\n{transcript_text}\n"
+                    else:
+                        content += "\n\n> ⚠️ 该视频无可用字幕，ASR 转写也未成功\n"
                     fp = _save_temp_file(slug, "youtube-video", 1, content, ctx)
                     from . import add_source
                     r2 = await add_source.run({"notebook_id": nb_id, "file_path": fp}, ctx)
