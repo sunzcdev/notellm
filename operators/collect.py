@@ -125,6 +125,19 @@ async def run(args: dict, ctx: Context) -> dict:
                 raw = _run_ar_tool("bilibili", ["video", vlink], timeout=30)
                 if raw and "❌" not in raw:
                     content = _ensure_frontmatter(raw, vlink, "bilibili-video")
+                    # No subtitle API for Bilibili — directly ASR
+                    log("INFO", f"No subtitle API for Bilibili, transcribing {vlink}")
+                    asr_raw = _run_ar_tool("bilibili", ["transcribe", vlink], timeout=600)
+                    if asr_raw and "❌" not in asr_raw and "转录失败" not in asr_raw:
+                        asr_body = asr_raw
+                        if asr_body.startswith("---"):
+                            parts = asr_body.split("---", 2)
+                            if len(parts) >= 3:
+                                asr_body = parts[2].strip()
+                        if asr_body:
+                            content += f"\n\n## 视频全文\n\n{asr_body}\n"
+                    else:
+                        content += "\n\n> ⚠️ ASR 转写未成功\n"
                     fp = _save_temp_file(slug, "bilibili-video", 1, content, ctx)
                     from . import add_source
                     r2 = await add_source.run({"notebook_id": nb_id, "file_path": fp}, ctx)
@@ -187,6 +200,19 @@ async def run(args: dict, ctx: Context) -> dict:
                 raw = _run_ar_tool("douyin", ["video", vlink], timeout=30)
                 if raw and "❌" not in raw:
                     content = _ensure_frontmatter(raw, vlink, "douyin-video")
+                    # No subtitle API for Douyin — directly ASR
+                    log("INFO", f"No subtitle API for Douyin, transcribing {vlink}")
+                    asr_raw = _run_ar_tool("douyin", ["transcribe", vlink], timeout=600)
+                    if asr_raw and "❌" not in asr_raw and "转录失败" not in asr_raw:
+                        asr_body = asr_raw
+                        if asr_body.startswith("---"):
+                            parts = asr_body.split("---", 2)
+                            if len(parts) >= 3:
+                                asr_body = parts[2].strip()
+                        if asr_body:
+                            content += f"\n\n## 视频全文\n\n{asr_body}\n"
+                    else:
+                        content += "\n\n> ⚠️ ASR 转写未成功\n"
                     fp = _save_temp_file(slug, "douyin-video", 1, content, ctx)
                     from . import add_source
                     r2 = await add_source.run({"notebook_id": nb_id, "file_path": fp}, ctx)
