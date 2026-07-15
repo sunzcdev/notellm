@@ -63,12 +63,12 @@ async def run(args: dict, ctx: Context) -> dict:
     if len(body) < 10:
         return {"warning": "Very short content (<10 chars)", "source_id": "", "title": title}
 
-    r = ctx.client.post("/api/sources/json", {"type": "text", "title": title, "content": body})
+    r = await ctx.client.post("/api/sources/json", {"type": "text", "title": title, "content": body})
     sid = r.get("id", "")
     if not sid:
         return {"error": "No source ID returned from ONB"}
 
-    lr = ctx.client.post(f"/api/notebooks/{notebook_id}/sources/{sid}")
+    lr = await ctx.client.post(f"/api/notebooks/{notebook_id}/sources/{sid}")
     ctx.client.invalidate_cache("notebooks")
 
     result = {"source_id": sid, "title": title}

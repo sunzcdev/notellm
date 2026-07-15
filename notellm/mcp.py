@@ -35,7 +35,11 @@ def _read() -> dict:
     return json.loads(line)
 
 
-async def serve(registry: OperatorRegistry, ctx: Context,
+from .pipeline_executor import PipelineExecutor
+
+...
+
+async def serve(registry: OperatorRegistry, pipeline_executor: PipelineExecutor, ctx: Context,
                 hooks: list[EventHook]) -> None:
     import asyncio
 
@@ -83,10 +87,29 @@ async def serve(registry: OperatorRegistry, ctx: Context,
                 _send({"jsonrpc": "2.0", "id": mid, "result": {}})
 
             elif method == "tools/list":
-                _send({
-                    "jsonrpc": "2.0", "id": mid,
-                    "result": {"tools": registry.list_tools()},
-                })
+                tools = [
+                    {
+                        "name": "collect",
+                        "description": "采集数据并入库",
+                        "inputSchema": {"type": "object", "properties": {"topic": {"type": "string"}, "source_input": {"type": "string"}, "source_type": {"type": "string"}}, "required": ["topic", "source_input", "source_type"]}
+                    },
+                    {
+                        "name": "summarize",
+                        "description": "总结 Notebook 内容",
+                        "inputSchema": {"type": "object", "properties": {"notebook_id": {"type": "string"}, "format": {"type": "string"}}, "required": ["notebook_id", "format"]}
+                    },
+                    {
+                        "name": "podcast",
+                        "description": "生成播客",
+                        "inputSchema": {"type": "object", "properties": {"notebook_id": {"type": "string"}, "language": {"type": "string"}}, "required": ["notebook_id", "language"]}
+                    },
+                    {
+                        "name": "config",
+                        "description": "调整运行时参数",
+                        "inputSchema": {"type": "object", "properties": {"pipeline_name": {"type": "string"}, "settings": {"type": "object"}}, "required": ["pipeline_name", "settings"]}
+                    }
+                ]
+                _send({"jsonrpc": "2.0", "id": mid, "result": {"tools": tools}})
 
             elif method == "tools/call":
                 tool = params.get("name", "")
@@ -95,15 +118,21 @@ async def serve(registry: OperatorRegistry, ctx: Context,
                 await _fire("on_tool_start", tool, args)
 
                 try:
-                    result = await registry.call_tool(tool, args, ctx)
+                    if tool == "collect":
+                        result = await pipeline_executor.collect_data(**args, ctx=ctx)
+                    elif tool == "summarize":
+                        result = await pipeline_executor.summarize_notebook(**args, ctx=ctx)
+                    elif tool == "podcast":
+                        result = await pipeline_executor.generate_podcast(**args, ctx=ctx)
+                    elif tool == "config":
+                        result = await pipeline_executor.configure_pipeline(**args, ctx=ctx)
+                    else:
+                        raise KeyError(f"Unknown tool: {tool}")
+
                     await _fire("on_tool_complete", tool, result)
                     _send({
                         "jsonrpc": "2.0", "id": mid,
-                        "result": {
-                            "content": [
-                                {"type": "text", "text": json.dumps(result, indent=2, ensure_ascii=False)}
-                            ]
-                        },
+                        "result": {"content": [{"type": "text", "text": json.dumps(result, indent=2, ensure_ascii=False)}]}
                     })
                 except KeyError:
                     _send({

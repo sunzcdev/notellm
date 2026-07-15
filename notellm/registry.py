@@ -65,15 +65,28 @@ class OperatorRegistry:
         return list(self._operators.keys())
 
     def list_tools(self) -> list[dict]:
-        tools = []
-        for name in sorted(self._operators):
-            op = self._operators[name]
-            if isinstance(op, MissingOperator):
-                continue
-            schema = getattr(op, "TOOL_SCHEMA", None)
-            if schema:
-                tools.append(schema)
-        return tools
+        return [
+            {
+                "name": "collect",
+                "description": "采集数据并入库",
+                "inputSchema": {"type": "object", "properties": {"topic": {"type": "string"}, "source_input": {"type": "string"}, "source_type": {"type": "string"}}, "required": ["topic", "source_input", "source_type"]}
+            },
+            {
+                "name": "summarize",
+                "description": "总结 Notebook 内容",
+                "inputSchema": {"type": "object", "properties": {"notebook_id": {"type": "string"}, "format": {"type": "string"}}, "required": ["notebook_id", "format"]}
+            },
+            {
+                "name": "podcast",
+                "description": "生成播客",
+                "inputSchema": {"type": "object", "properties": {"notebook_id": {"type": "string"}, "language": {"type": "string"}}, "required": ["notebook_id", "language"]}
+            },
+            {
+                "name": "config",
+                "description": "调整运行时参数",
+                "inputSchema": {"type": "object", "properties": {"pipeline_name": {"type": "string"}, "settings": {"type": "object"}}, "required": ["pipeline_name", "settings"]}
+            }
+        ]
 
     async def call_tool(self, name: str, args: dict, ctx: Context) -> dict[str, Any]:
         tool_name = name
