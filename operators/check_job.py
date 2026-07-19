@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import re
 import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,23 +48,66 @@ async def run(args: dict, ctx: Context) -> dict:
         "updated": r.get("updated"),
     }
 
-    if status == "completed" and isinstance(result, dict) and result.get("source_id"):
+    if status == "completed" and isinstance(result, dict) and result.get("episode_id"):
+        ep_id = result["episode_id"]
+        ep_short = ep_id.replace("podcast_episode:", "")
+        audio_url_path = f"/api/podcasts/episodes/{ep_short}/audio"
+
+        # 下载播客音频并保存到专用目录
+        try:
+            # 直接下载音频二进制数据
+            full_url = f"{ctx.config.api_url}{audio_url_path}"
+            headers = {}
+            token = ctx.client._ensure_token() if hasattr(ctx.client, '_ensure_token') else ctx.config.password
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+            req = urllib.request.Request(full_url, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                audio_data = resp.read()
+
+            if audio_data:
+                # 生成有意义的文件名
+                episode_name = result.get("episode_name", "podcast")
+                safe_name = re.sub(r'[^-_.a-zA-Z0-9一-鿿\s]', '_', episode_name)[:50]
+                date_str = time.strftime("%Y-%m-%d")
+                out_filename = f"{safe_name}_{date_str}.wav"
+
+                # 保存到 podcast_output_dir
+                out_dir = ctx.config.podcast_output_dir
+                os.makedirs(out_dir, exist_ok=True)
+                out_path = os.path.join(out_dir, out_filename)
+
+                with open(out_path, "wb") as f:
+                    f.write(audio_data)
+
+                log("INFO", "Podcast audio saved", path=out_path)
+
+                # 清理临时文件（如果有）
+                temp_path = result.get("audio_file_path", "")
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                        log("INFO", "Cleaned temp file", path=temp_path)
+                    except OSError:
+                        pass
+
+                out["output"] = {
+                    "type": "podcast_episode",
+                    "episode_id": ep_id,
+                    "audio_path": out_path,
+                    "audio_url": audio_url_path,
+                    "full_audio_url": full_url,
+                    "filename": out_filename,
+                }
+        except Exception as e:
+            log("WARN", "Failed to save podcast audio", error=str(e))
+
+    if status == "completed" and isinstance(result, dict) and result.get("source_id") and "output" not in out:
         _fetch_insight_content(out, result, job_id, ctx)
 
     if "output" in out and out["output"].get("content", "").strip():
         _auto_save_results(out, result, job_id, ctx)
-
-    if status == "completed" and isinstance(result, dict) and result.get("episode_id"):
-        ep_id = result["episode_id"]
-        ep_short = ep_id.replace("podcast_episode:", "")
-        audio_url = f"/api/podcasts/episodes/{ep_short}/audio"
-        out["output"] = {
-            "type": "podcast_episode",
-            "episode_id": ep_id,
-            "audio_path": result.get("audio_file_path", ""),
-            "audio_url": audio_url,
-            "full_audio_url": f"{ctx.config.api_url}{audio_url}",
-        }
 
     return out
 

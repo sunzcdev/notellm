@@ -89,21 +89,5 @@ class OperatorRegistry:
         ]
 
     async def call_tool(self, name: str, args: dict, ctx: Context) -> dict[str, Any]:
-        tool_name = name
-        for op_name, op in self._operators.items():
-            if isinstance(op, MissingOperator):
-                continue
-            schema = getattr(op, "TOOL_SCHEMA", None)
-            if schema and schema.get("name") == name:
-                tool_name = op_name
-                break
-
-        op = self._operators.get(tool_name)
-        if op is None or isinstance(op, MissingOperator):
-            raise KeyError(f"Unknown tool: {name}")
-
-        run_fn = getattr(op, "run", None)
-        if run_fn is None:
-            raise KeyError(f"Operator '{tool_name}' has no run function")
-
-        return await run_fn(args, ctx)
+        # 彻底封禁原子工具调用，只允许通过 pipeline_executor 处理
+        raise KeyError(f"Direct tool calls are forbidden: {name}. Use pipeline tools only.")

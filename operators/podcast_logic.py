@@ -27,7 +27,7 @@ async def generate_analysis(content: str, ctx: Context) -> str:
 
     内容: {content[:10000]}
     """
-    res = await ctx.client.post("/api/transformations/execute", {
+    res = ctx.client.post("/api/transformations/execute", {
         "transformation_id": "transformation:6ht5kngsxqjx3y8g4yoq",
         "input_text": prompt,
     })
@@ -45,7 +45,7 @@ async def generate_trio_script(notebook_id: str, ctx: Context) -> str:
     Analysis context: {analysis}
     Content: {content[:5000]}
     """
-    outline = await ctx.client.post("/api/transformations/execute", {
+    outline = ctx.client.post("/api/transformations/execute", {
         "transformation_id": "transformation:6ht5kngsxqjx3y8g4yoq",
         "input_text": arch_prompt,
     })
@@ -57,7 +57,7 @@ async def generate_trio_script(notebook_id: str, ctx: Context) -> str:
     Outline: {outline.get('output', '')}
     Context/Strategy: {analysis}
     """
-    script_res = await ctx.client.post("/api/transformations/execute", {
+    script_res = ctx.client.post("/api/transformations/execute", {
         "transformation_id": "dramatist_mode",
         "input_text": dram_prompt,
     })
@@ -89,7 +89,7 @@ async def generate_summary_podcast(notebook_id: str, ctx: Context) -> dict:
     summary = r.get("output", "")
 
     script_prompt = f"Convert to natural 3-person script (**Maia**/**Kai**/**Zhenzhao**). Summary: {summary}"
-    script_res = await ctx.client.post("/api/transformations/execute", {
+    script_res = ctx.client.post("/api/transformations/execute", {
         "transformation_id": "dramatist_mode", "input_text": script_prompt,
     })
     script = script_res.get("output", "")

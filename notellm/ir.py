@@ -21,6 +21,9 @@ class OnbConfig:
     tool_timeout: int = 120
     cache_ttl: int = 30
     podcast_profiles: tuple[str, str] = ("tech_discussion", "tech_experts")
+    podcast_output_dir: str = os.path.expanduser("~/播客")
+    podcast_host1: str = "Maia"  # 女性 知性温柔
+    podcast_host2: str = "Kai"   # 男性 耳朵SPA
 
     @classmethod
     def from_env(cls) -> OnbConfig:
@@ -39,6 +42,9 @@ class OnbConfig:
                 os.environ.get("NOTELLM_PODCAST_EPISODE_PROFILE", "tech_discussion"),
                 os.environ.get("NOTELLM_PODCAST_SPEAKER_PROFILE", "tech_experts"),
             ),
+            podcast_output_dir=os.environ.get("NOTELLM_PODCAST_OUTPUT_DIR", os.path.expanduser("~/播客")),
+            podcast_host1=os.environ.get("NOTELLM_PODCAST_HOST1", "Maia"),
+            podcast_host2=os.environ.get("NOTELLM_PODCAST_HOST2", "Kai"),
         )
 
 

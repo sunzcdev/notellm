@@ -1,4 +1,5 @@
 from __future__ import annotations
+from operators.model_resolver import ModelConfigResolver
 
 import re
 import time
@@ -21,6 +22,7 @@ TOOL_SCHEMA = {
             "notebook_id": {"type": "string", "description": "Notebook ID"},
             "mode": {"type": "string", "description": "Generation mode — transformation name or 'podcast'"},
             "per_source": {"type": "boolean", "description": "If true: one job per source (legacy). Default: false (merge all sources into one)."},
+            "model": {"type": "string", "description": "可选：指定用于生成脚本的 LLM 模型。"},
         },
         "required": ["notebook_id", "mode"],
     },
@@ -31,25 +33,102 @@ async def run(args: dict, ctx: Context) -> dict:
     notebook_id = args.get("notebook_id", "")
     mode = args.get("mode", "")
     per_source = args.get("per_source", False)
+    model = args.get("model")
 
     if mode.lower() == "podcast":
-        return _generate_podcast(notebook_id, ctx)
+        return await _generate_podcast(notebook_id, ctx, model=model)
+    if mode.lower() == "trio":
+        return await _generate_trio_podcast(notebook_id, ctx, model=model)
+    if mode.lower() == "summary_podcast":
+        return await _generate_summary_podcast(notebook_id, ctx, model=model)
     if per_source:
         return _generate_transform(notebook_id, mode, ctx)
     return _generate_merged(notebook_id, mode, ctx)
 
 
-def _generate_podcast(notebook_id: str, ctx: Context) -> dict:
+def _build_podcast_filename(nb: dict, ctx: Context) -> str:
+    """Extract core argument from notebook content via analysis and build a safe filename."""
+    import json
+    content = nb.get("content", "") if isinstance(nb, dict) else str(nb)
+    analysis_str = ctx.client.post("/api/transformations/execute", {
+        "transformation_id": "transformation:6ht5kngsxqjx3y8g4yoq",
+        "input_text": f"""请分析以下内容，提取出用于支撑播客对话的元数据。
+请以 JSON 格式输出，包含以下字段：
+1. "logic_structure": {{ "core_argument": "核心论点是什么？" }}
+内容: {content[:10000]}""",
+    })
+    try:
+        analysis = json.loads(analysis_str.get("output", "{}"))
+        core = analysis.get("logic_structure", {}).get("core_argument", "podcast")
+        safe_name = "".join([c if c.isalnum() else "_" for c in core[:20]])
+    except Exception:
+        safe_name = "podcast"
+
+    import os
+    out_dir = ctx.config.podcast_output_dir
+    os.makedirs(out_dir, exist_ok=True)
+    return os.path.join(out_dir, f"{safe_name}.wav")
+
+
+async def _generate_podcast(notebook_id: str, ctx: Context, model: str | None = None) -> dict:
     nb = ctx.client.get(f"/api/notebooks/{notebook_id}")
     ep_name = nb.get("name", "Podcast") if isinstance(nb, dict) else "Podcast"
+
+    filename = _build_podcast_filename(nb, ctx)
+
     ep_profile, sp_profile = ctx.config.podcast_profiles
-    r = ctx.client.post("/api/podcasts/generate", {
+
+    payload = {
         "notebook_id": notebook_id,
         "episode_name": f"{ep_name} - Notellm",
         "episode_profile": ep_profile,
         "speaker_profile": sp_profile,
-    })
-    out = {"job_id": r["job_id"], "mode": "podcast", "status": "queued"}
+        "expected_filename": filename,
+    }
+
+    if model:
+        payload["model"] = ModelConfigResolver.resolve_model(model, ctx)
+
+    r = ctx.client.post("/api/podcasts/generate", payload)
+    if not isinstance(r, dict) or "job_id" not in r:
+        return {"error": f"Unexpected response from podcast generation: {r}"}
+    out = {"job_id": r["job_id"], "mode": "podcast", "status": "queued",
+           "expected_filename": filename}
+    if "note" in r:
+        out["note"] = "Generation runs async; check with notellm_check_job"
+    return out
+
+
+async def _generate_trio_podcast(notebook_id: str, ctx: Context, model: str | None = None) -> dict:
+    # 1. Generate custom script
+    script = await _generate_trio_script(notebook_id, ctx)
+
+    # 2. Call existing generate podcast logic with custom script
+    nb = ctx.client.get(f"/api/notebooks/{notebook_id}")
+    ep_name = nb.get("name", "Podcast") if isinstance(nb, dict) else "Podcast"
+
+    filename = _build_podcast_filename(nb, ctx)
+
+    ep_profile, sp_profile = ctx.config.podcast_profiles
+
+    payload = {
+        "notebook_id": notebook_id,
+        "episode_name": f"{ep_name} - Notellm (Trio)",
+        "episode_profile": ep_profile,
+        "speaker_profile": sp_profile,
+        "expected_filename": filename,
+        "custom_script": script,
+    }
+
+    if model:
+        payload["model"] = ModelConfigResolver.resolve_model(model, ctx)
+
+    r = ctx.client.post("/api/podcasts/generate", payload)
+    if not isinstance(r, dict) or "job_id" not in r:
+        return {"error": f"Unexpected response from podcast generation: {r}"}
+
+    out = {"job_id": r["job_id"], "mode": "trio_podcast", "status": "queued",
+           "expected_filename": filename}
     if "note" in r:
         out["note"] = "Generation runs async; check with notellm_check_job"
     return out
@@ -218,3 +297,84 @@ type: notellm_output
         return str(fp)
     except Exception:
         return ""
+
+
+async def _generate_trio_script(notebook_id: str, ctx: Context) -> str:
+    # 1. Get content
+    nb = ctx.client.get(f"/api/notebooks/{notebook_id}")
+    content = nb.get("content", "") if isinstance(nb, dict) else str(nb)
+
+    # 2. Architect Agent: Create Outline
+    arch_prompt = f"""
+    Create a 4-step 'Trio Discussion' outline for a podcast based on this content.
+    Steps: Anchor, Deconstruct, Collision, Takeaway.
+    Include 2 nodes where the user 'Zhenzhao' (a silent listener/friend) is mentioned
+    or addressed by Maia and Kai.
+    Content: {content[:5000]}
+    """
+    outline = ctx.client.post("/api/transformations/execute", {
+        "transformation_id": "transformation:6ht5kngsxqjx3y8g4yoq",
+        "input_text": arch_prompt,
+    })
+
+    # 3. Dramatist Agent: Create Script
+    dram_prompt = f"""
+    Convert the following outline into a natural, spoken-word 3-person podcast script.
+    Host 1: Maia (Intellectual, Gentle). Host 2: Kai (Expert, Hardcore).
+    User: Zhenzhao (Silent listener, friend, present).
+    Use behavioral cues. Maia and Kai must talk to each other but also occasionally
+    mention Zhenzhao naturally.
+    Outline: {outline.get('output', '')}
+    """
+    script_res = ctx.client.post("/api/transformations/execute", {
+        "transformation_id": "dramatist_mode",
+        "input_text": dram_prompt,
+    })
+    return script_res.get("output", "")
+
+async def _generate_summary_podcast(notebook_id: str, ctx: Context, model: str | None = None) -> dict:
+    # 1. Get summary
+    # We'll use "summary" transformation
+    tx = ctx.client.get("/api/transformations")
+    tid, tname = _find_transformation(tx, "summary")
+    if not tid:
+        return {"error": "Summary transformation not found"}
+
+    srcs, merged_text = _build_merged_text(notebook_id, ctx)
+    r = ctx.client.post("/api/transformations/execute", {
+        "transformation_id": tid,
+        "input_text": merged_text,
+    }, timeout=300)
+    summary = r.get("output", "")
+
+    # 2. Convert Summary to Trio Script
+    script_prompt = f"""
+    Convert the following summary into a natural, spoken-word 3-person podcast script.
+    Host 1: Maia (Intellectual, Gentle). Host 2: Kai (Expert, Hardcore).
+    User: Zhenzhao (Silent listener, friend, present).
+    Format as:
+    **Maia**: ...
+    **Kai**: ...
+
+    Use behavioral cues. Maia and Kai must talk to each other but also occasionally
+    mention Zhenzhao naturally.
+    Summary: {summary}
+    """
+
+    payload = {
+        "transformation_id": "dramatist_mode",
+        "input_text": script_prompt,
+    }
+
+    if model:
+        # 针对 transformation 的 model 覆盖，需要按需扩展 resolver
+        payload["model"] = ModelConfigResolver.resolve_model(model, ctx)
+
+    script_res = ctx.client.post("/api/transformations/execute", payload)
+    script = script_res.get("output", "")
+
+    # 3. Call TTS synthesize
+    from operators.synthesize import run as tts_run
+    res = await tts_run({"text": script, "voice": "Maia", "model": "fb8fvu9rfdj9ectik8dw"}, ctx)
+
+    return res
